@@ -1,70 +1,343 @@
 # Birthday Card Website 🎂
 Website link: https://selena1224.github.io/birthday_card/
 
-A fun, interactive birthday card where our team can leave messages and celebrate together, no matter the distance!
+A custom birthday card website developed for a remote team member in the Philippines. The website allows coworkers to leave birthday messages through a shared link without creating accounts.
 
-## Website Setup Guide
+Messages are stored in a PostgreSQL database through Supabase, displayed on a shared message wall, and managed through organizer-only access.
 
-### 1. GitHub Pages
+Technologies Used
 
-1. Upload `index.html` to the GitHub repository.
-2. Go to **Settings → Pages**.
-3. Select **Deploy from a branch**.
-4. Choose `main` and `/ (root)`.
-5. Click **Save**.
+HTML5: Website structure and forms
 
-### 2. Supabase Database
+CSS3: Responsive design, dark theme, and animations
 
-1. Go to [Supabase](https://supabase.com/dashboard).
-2. Open the `birthday_card` project.
-3. Select **SQL Editor → New query**.
-4. Copy the contents of `supabase-setup.sql` into the editor.
-5. Click **Run**.
+JavaScript: Form handling, validation, and interactive features
 
-### 3. Connect Supabase to GitHub
+Supabase: Backend services, authentication, and database integration
 
-1. Open the GitHub repository.
-2. Click `index.html`.
-3. Click the pencil icon to edit the file.
-4. Press **Ctrl + F** and search for `SUPABASE_URL`.
-5. Find these lines:
+PostgreSQL: Data storage, SQL queries, and access control
 
-```javascript
-const SUPABASE_URL = 'YOUR_SUPABASE_PROJECT_URL';
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_PUBLISHABLE_KEY';
-```
+GitHub Pages: Website hosting and deployment
 
-Replace them with:
+Key Features
 
-```javascript
-const SUPABASE_URL = 'https://gnyuyyyiazpfqnxhaobw.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_YOUR_ACTUAL_KEY_HERE';
-```
+Group birthday card with a custom design and embedded images
 
-Replace `sb_publishable_YOUR_ACTUAL_KEY_HERE` with the full publishable key from **Supabase → Settings → API Keys**.
+Public message submission without requiring accounts
 
-**Important:** Keep the quotation marks and never use a secret or `service_role` key in the website.
+Shared message wall displaying everyone's birthday wishes
 
-6. Click **Commit changes**.
+Automatic message refresh approximately every 12 seconds
 
-### 4. Test the Birthday Card
+Email-based organizer authentication
 
-1. Open the published GitHub Pages website.
-2. Enter a name and birthday message.
-3. Click **Add My Birthday Wish**.
-4. Refresh the page and confirm the message is still there.
-5. Open the website on another device to confirm the message is visible to everyone.
+Organizer-only message deletion
 
-### 5. Organizer Access
+Database security using Row Level Security (RLS)
 
-The website includes an organizer-only option for deleting birthday messages.
+Mobile-friendly design and confetti animations
 
-Follow the authentication and security instructions in `SETUP.md` to configure organizer access in Supabase. Delete permissions must be enforced by database policies, not just by hiding the button.
+System Architecture
 
-### Notes
+The website uses GitHub Pages for frontend hosting and Supabase for backend operations.
 
-- Coworkers do not need accounts to sign.
-- Birthday messages are visible to everyone.
-- GitHub Pages hosts the website.
-- Supabase stores the messages.
-- The database must be connected for shared signing to work.
+Workflow:
+
+A coworker opens the website through the shared GitHub Pages link.
+
+They enter their name, birthday message, and selected emoji.
+
+JavaScript validates the submission and sends it to Supabase.
+
+PostgreSQL stores the message in the birthday_wishes table.
+
+The website retrieves and displays messages for all visitors.
+
+The verified organizer can delete messages using an authenticated session.
+
+Database Design
+
+Created a PostgreSQL table named birthday_wishes to store submissions.
+
+Column
+
+Data Type
+
+Description
+
+id
+
+BIGINT
+
+Unique message identifier
+
+name
+
+TEXT
+
+Name of the person signing
+
+message
+
+TEXT
+
+Birthday message
+
+emoji
+
+TEXT
+
+Selected emoji
+
+created_at
+
+TIMESTAMPTZ
+
+Date and time submitted
+
+SQL: Create Database Table
+
+CREATE TABLE IF NOT EXISTS public.birthday_wishes (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name TEXT NOT NULL,
+    message TEXT NOT NULL,
+    emoji TEXT NOT NULL DEFAULT '🎂',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+Enabled Row Level Security:
+
+ALTER TABLE public.birthday_wishes
+ENABLE ROW LEVEL SECURITY;
+
+SQL Queries and Security Policies
+
+1. Allow Visitors to Read Messages
+
+Created a policy that allows anonymous users to view birthday messages.
+
+CREATE POLICY "Anyone can read birthday wishes"
+ON public.birthday_wishes
+FOR SELECT
+TO anon
+USING (true);
+
+2. Allow Visitors to Submit Messages
+
+Created an INSERT policy so coworkers can submit birthday wishes without creating accounts.
+
+CREATE POLICY "Anyone can leave a birthday wish"
+ON public.birthday_wishes
+FOR INSERT
+TO anon
+WITH CHECK (true);
+
+3. Allow Authenticated Users to Read and Post
+
+During testing, I identified that signing in changed the Supabase user role from anon to authenticated.
+
+The existing policies did not provide the required permissions to the authenticated role.
+
+Added the following SQL permissions:
+
+GRANT SELECT, INSERT
+ON public.birthday_wishes
+TO authenticated;
+
+Created an authenticated-user read policy:
+
+CREATE POLICY "Signed-in users can read wishes"
+ON public.birthday_wishes
+FOR SELECT
+TO authenticated
+USING (true);
+
+Created an authenticated-user insert policy:
+
+CREATE POLICY "Signed-in users can post wishes"
+ON public.birthday_wishes
+FOR INSERT
+TO authenticated
+WITH CHECK (true);
+
+4. Organizer Authentication
+
+Implemented email-based authentication using Supabase Auth.
+
+Created a PostgreSQL function to verify whether the signed-in user is the authorized organizer.
+
+CREATE OR REPLACE FUNCTION public.is_birthday_card_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL STABLE SECURITY DEFINER
+SET search_path = ''
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM auth.users u
+        WHERE u.id = auth.uid()
+        AND LOWER(u.email) =
+            LOWER('ORGANIZER_EMAIL@example.com')
+        AND u.email_confirmed_at IS NOT NULL
+    );
+$$;
+
+The organizer's actual email address is excluded from this public documentation.
+
+5. Organizer-Only Message Deletion
+
+Implemented a DELETE policy to restrict message removal to the verified organizer.
+
+GRANT DELETE
+ON public.birthday_wishes
+TO authenticated;
+
+CREATE POLICY "Organizer can delete birthday wishes"
+ON public.birthday_wishes
+FOR DELETE
+TO authenticated
+USING (public.is_birthday_card_admin());
+
+The Delete button is shown only to the organizer, while PostgreSQL Row Level Security enforces the actual permission.
+
+JavaScript and Supabase Integration
+
+Retrieve Birthday Messages
+
+const { data, error } = await supabase
+    .from('birthday_wishes')
+    .select('id, name, message, emoji, created_at')
+    .order('created_at', { ascending: false })
+    .limit(500);
+
+This query retrieves the most recent birthday messages and displays them in reverse chronological order.
+
+Insert a New Birthday Message
+
+const { error } = await supabase
+    .from('birthday_wishes')
+    .insert({
+        name,
+        message,
+        emoji
+    });
+
+Messages are saved to PostgreSQL and displayed on the shared message wall.
+
+Delete a Birthday Message
+
+const { error } = await supabase
+    .from('birthday_wishes')
+    .delete()
+    .eq('id', id);
+
+This operation identifies a message by its unique ID. Supabase permissions determine whether the signed-in user can delete it.
+
+Email Authentication
+
+const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+        emailRedirectTo:
+            window.location.origin +
+            window.location.pathname
+    }
+});
+
+This sends a one-time sign-in link to the organizer's email address.
+
+Testing and Troubleshooting
+
+Several issues were identified and resolved during development.
+
+Issue 1: Database Connection Error
+
+Problem: Birthday messages failed to load.
+
+Cause: The Supabase URL incorrectly included /rest/v1/.
+
+Solution: Updated the configuration to use the base project URL.
+
+const SUPABASE_URL =
+    'https://YOUR_PROJECT_ID.supabase.co';
+
+Issue 2: Authentication Redirect Error
+
+Problem: After clicking the verification email, the browser redirected to localhost.
+
+Cause: Supabase authentication was configured with a local development URL.
+
+Solution: Updated Supabase Authentication URL Configuration to use the deployed GitHub Pages URL.
+
+Issue 3: Organizer Not Recognized
+
+Problem: The account successfully signed in but was not recognized as the organizer.
+
+Cause: The organizer verification function did not match the authorized email.
+
+Solution: Updated the PostgreSQL function to verify the signed-in user's email and confirmation status.
+
+Issue 4: Message Submission Failed
+
+Problem: Messages could not be submitted after organizer authentication.
+
+Cause: Database INSERT permissions were configured for anonymous users but not authenticated users.
+
+Solution: Added the required GRANT statement and INSERT policy for authenticated users.
+
+Issue 5: Delete Button Not Working
+
+Problem: The organizer could see the Delete button, but messages were not deleted.
+
+Cause: PostgreSQL DELETE permissions and the organizer-specific RLS policy needed to be configured.
+
+Solution: Added the DELETE grant and policy using the organizer verification function.
+
+Issue 6: Authentication Email Delivery
+
+Problem: Repeated login attempts resulted in unsuccessful email requests.
+
+Possible cause: Supabase's built-in authentication email rate limits.
+
+Resolution: Reduced repeated email requests and corrected the authentication redirect settings.
+
+Deployment
+
+The frontend is deployed through GitHub Pages.
+
+Deployment process:
+
+Created a GitHub repository.
+
+Uploaded the index.html website file.
+
+Enabled GitHub Pages deployment from the main branch.
+
+Created and configured the Supabase project.
+
+Connected the website using the Supabase project URL and publishable API key.
+
+Executed SQL queries to create database permissions and security policies.
+
+Configured email authentication and organizer authorization.
+
+Tested anonymous submissions, message visibility, and organizer-only deletion.
+
+Security Considerations
+
+Supabase Row Level Security controls database access.
+
+Anonymous users can read and submit messages.
+
+Only the authorized organizer can delete messages.
+
+The website does not expose a database secret or service_role key.
+
+Public message submissions are not moderated automatically.
+
+Messages are visible to anyone with access to the website.
+
+Project Outcome
+
+Developed and deployed an interactive birthday card website with persistent shared messages, anonymous submissions, secure organizer authentication, and controlled message deletion.
+
+The project demonstrates practical experience with frontend development, JavaScript, PostgreSQL, SQL queries, CRUD operations, REST API integration, authentication, database security, debugging, and GitHub Pages deployment.
