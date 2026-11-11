@@ -76,6 +76,13 @@
     .message:nth-child(4n+1){background:#fffaf0}.message:nth-child(4n+2){background:#f3f9ff}.message:nth-child(4n+3){background:#f1fbf4}.message:nth-child(4n){background:#fff3f3}
     .message-head{display:flex;gap:12px;align-items:center;margin-bottom:10px}.avatar{width:48px;height:48px;border-radius:15px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:27px;flex-shrink:0}.who{font-weight:800}.date{font-size:12px;color:#727b87}.message-body{margin:0;white-space:pre-wrap;line-height:1.65}.empty{text-align:center;border:2px dashed #e1d8cb;border-radius:19px;padding:45px 14px;color:#7b7267}.empty .big{font-size:48px;display:block;margin-bottom:12px}
     .status{padding:12px 14px;border-radius:12px;margin-top:16px;font-size:14px;display:none}.status.error{display:block;background:#ffe5e8;color:#923b50}.status.ok{display:block;background:#e4f8e8;color:#316c49}
+    .admin-area{margin-top:20px;border-top:1px solid #d4dce7;padding-top:16px;font-size:13px}
+    .admin-toggle{border:0;background:transparent;color:#95a4b7;cursor:pointer;text-decoration:underline;font:inherit;padding:4px 0}
+    .admin-login{display:none;margin-top:12px;background:#182535;border:1px solid #3f546d;border-radius:12px;padding:15px}
+    .admin-login.open{display:block}
+    .admin-login input{width:100%;box-sizing:border-box;border:1px solid #62728a;border-radius:8px;padding:10px;margin:9px 0;background:#fff;color:#1a2332;font:inherit}
+    .admin-action{border:1px solid #8292a5;background:#26384f;color:#fff;cursor:pointer;padding:8px 12px;border-radius:9px;font:inherit;margin:4px 5px 4px 0}
+    .admin-logout{display:none}.delete-wish{margin-left:auto;border:1px solid #b64c57;background:#fff2f3;color:#922f42;border-radius:9px;padding:6px 10px;font:700 12px 'DM Sans',sans-serif;cursor:pointer}
     .footer{text-align:center;font-size:13px;color:#786f68;padding-top:35px}
     .confetti{position:fixed;top:-30px;width:10px;height:16px;pointer-events:none;z-index:1000;animation:fall linear forwards}
     @keyframes fall{to{transform:translate3d(var(--x),110vh,0) rotate(720deg);opacity:0}}
@@ -183,6 +190,15 @@
           <div class="empty"><span class="big">🎉</span>Nobody has signed yet. Be the first.</div>
         </div>
         <div id="wall-status" class="status" role="status"></div>
+        <div class="admin-area">
+          <button type="button" id="admin-toggle" class="admin-toggle">Card organizer</button>
+          <div id="admin-login" class="admin-login">
+            <div id="admin-instructions">Organizer access: enter your email to receive a one-time sign-in link.</div>
+            <div id="admin-email-form"><input type="email" id="admin-email" placeholder="Your organizer email" aria-label="Organizer email" autocomplete="email"><button class="admin-action" id="send-login" type="button">Email me a sign-in link</button></div>
+            <button type="button" id="admin-logout" class="admin-action admin-logout">Sign out</button>
+            <div id="admin-status" role="status" aria-live="polite"></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -202,6 +218,54 @@
     const wallStatus = document.getElementById('wall-status');
     let emoji = '😎';
     let supabase = null;
+    let isAdmin = false;
+    const adminToggle = document.getElementById('admin-toggle');
+    const adminLogin = document.getElementById('admin-login');
+    const adminStatus = document.getElementById('admin-status');
+    const adminInstructions = document.getElementById('admin-instructions');
+    const adminEmailForm = document.getElementById('admin-email-form');
+    const adminLogout = document.getElementById('admin-logout');
+    adminToggle.addEventListener('click', () => adminLogin.classList.toggle('open'));
+    function showAdminState(){
+      adminInstructions.textContent = isAdmin ? 'Organizer mode is on. You can remove wishes below.' : 'Organizer access: enter your email to receive a one-time sign-in link.';
+      adminEmailForm.style.display = isAdmin ? 'none' : '';
+      adminLogout.style.display = isAdmin ? 'inline-block' : 'none';
+      adminToggle.textContent = isAdmin ? 'Organizer mode ✓' : 'Card organizer';
+    }
+    async function checkAdmin(){
+      if(!supabase || !configured){isAdmin=false;showAdminState();return;}
+      const {data:{user}} = await supabase.auth.getUser();
+      if(!user){isAdmin=false;showAdminState();return;}
+      const {data,error} = await supabase.rpc('is_birthday_card_admin');
+      isAdmin = !error && data === true;
+      if(!isAdmin) adminStatus.textContent = 'This account is not the card organizer.';
+      else adminStatus.textContent = '';
+      showAdminState();
+    }
+    document.getElementById('send-login').addEventListener('click',async ()=>{
+      const email=document.getElementById('admin-email').value.trim();
+      if(!email){adminStatus.textContent='Enter your email first.';return;}
+      if(!supabase){adminStatus.textContent='Connect the shared database before organizer login.';return;}
+      const {error} = await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:window.location.origin+window.location.pathname}});
+      adminStatus.textContent=error ? 'Could not send the sign-in email. Check your setup.' : 'Check your inbox for a sign-in link. Open it in this browser.';
+    });
+    adminLogout.addEventListener('click',async ()=>{if(supabase)await supabase.auth.signOut();isAdmin=false;showAdminState();await refresh()});
+    document.getElementById('messages').addEventListener('click',async e=>{
+      const btn=e.target.closest('.delete-wish');
+      if(!btn || !isAdmin)return;
+      const id=btn.dataset.id;
+      if(!confirm('Delete this birthday wish? This cannot be undone.'))return;
+      btn.disabled=true;
+      if(!configured){
+        const arr=readLocal();
+        const index=arr.findIndex(item=>String(item.id)===id);
+        if(index!==-1){arr.splice(index,1);localStorage.setItem(storageKey,JSON.stringify(arr))}
+        await refresh();return;
+      }
+      const {error}=await supabase.from('birthday_wishes').delete().eq('id',id);
+      if(error){setStatus(wallStatus,'Could not delete that message. Check organizer permissions.');btn.disabled=false;return;}
+      await refresh();
+    });
     const storageKey = 'birthday-card-local-demo-v2';
     const allowedEmoji = ['😎','🥳','🎂','🔥','👑'];
     const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -218,7 +282,8 @@
         const rawDate = item.created_at ? new Date(item.created_at) : new Date();
         const date = Number.isNaN(rawDate.getTime()) ? '' : rawDate.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
         const safeEmoji = allowedEmoji.includes(item.emoji) ? item.emoji : '😎';
-        return `<article class="message"><div class="message-head"><span class="avatar">${safeEmoji}</span><div><div class="who">${escapeHtml(item.name)}</div><div class="date">${escapeHtml(date)}</div></div></div><p class="message-body">${escapeHtml(item.message)}</p></article>`;
+        const deleteControl = isAdmin && item.id != null ? `<button type="button" class="delete-wish" data-id="${Number(item.id)}" aria-label="Delete wish by ${escapeHtml(item.name)}">Delete</button>` : '';
+        return `<article class="message"><div class="message-head"><span class="avatar">${safeEmoji}</span><div><div class="who">${escapeHtml(item.name)}</div><div class="date">${escapeHtml(date)}</div></div>${deleteControl}</div><p class="message-body">${escapeHtml(item.message)}</p></article>`;
       }).join('');
     }
 
@@ -245,7 +310,7 @@
 
     async function refresh(){
       if(!configured){ render(readLocal()); return; }
-      const {data,error}=await supabase.from('birthday_wishes').select('name,message,emoji,created_at').order('created_at',{ascending:false}).limit(500);
+      const {data,error}=await supabase.from('birthday_wishes').select('id,name,message,emoji,created_at').order('created_at',{ascending:false}).limit(500);
       if(error){ setStatus(wallStatus,'Could not load wishes right now. Please refresh and try again.'); return; }
       wallStatus.className='status';
       render(data || []);
@@ -255,7 +320,10 @@
       try{
         const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
         supabase=createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+        await supabase.auth.getSession();
+        await checkAdmin();
         await refresh();
+        supabase.auth.onAuthStateChange(()=>{setTimeout(async()=>{await checkAdmin();await refresh()},0)});
         setInterval(()=>{ if(!document.hidden) refresh(); },12000);
         document.addEventListener('visibilitychange',()=>{ if(!document.hidden) refresh(); });
       }catch(err){
@@ -264,6 +332,7 @@
       }
     } else {
       notes.innerHTML = '<strong>Preview mode:</strong> Messages only save in this browser until the shared database is connected. See SETUP.md.';
+      adminStatus.textContent = 'Connect Supabase to enable secure organizer access.';
       render(readLocal());
     }
 
@@ -283,7 +352,7 @@
           if(error) throw error;
         } else {
           const arr = readLocal();
-          arr.unshift({...entry, created_at:new Date().toISOString()});
+          arr.unshift({...entry, id:Date.now()+Math.floor(Math.random()*1000), created_at:new Date().toISOString()});
           localStorage.setItem(storageKey, JSON.stringify(arr));
         }
         document.getElementById('signer-message').value='';
